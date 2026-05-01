@@ -59,50 +59,6 @@ You also want screenshots going to the clipboard. Either:
 
 If you click into a non-editable area between screenshots, Snappr will skip auto-pasting that one and flash "On clipboard · ⌘V to paste". The next screenshot, if your cursor is back in an input, will paste normally.
 
-## Iterating
-
-After editing `Sources/Snappr/main.swift`:
-
-```bash
-./build-app.sh
-killall Snappr 2>/dev/null
-open Snappr.app
-```
-
-### About the re-grant loop
-
-Each rebuild produces a new ad-hoc code signature, which macOS treats as a different app. The Accessibility toggle stays on but points at the old signature, so you'll get re-prompted.
-
-**Workaround:** in System Settings → Accessibility, click the `–` button to remove Snappr, then re-add it via `+`. Re-grants stick until the next rebuild.
-
-**Long-term fix:** create a self-signed code signing certificate in Keychain Access and update `build-app.sh` to use `codesign --sign "Your Cert Name"` instead of `--sign -`. Then rebuilds preserve the signature and the AX grant persists. Not done yet — PRs welcome.
-
-## How it works
-
-Roughly 350 lines of Swift in a single file. The pieces:
-
-- **`CGEventTap`** listens system-wide for `flagsChanged` events. When it sees Ctrl-down twice within 0.4s, it fires `arm()`. While armed, it watches for Ctrl or Escape and fires `disarm()`.
-- **`PasteboardWatcher`** polls `NSPasteboard.general.changeCount` every 150ms. macOS has no clipboard-change notification API; polling is the documented approach. When the change count moves and the new content is image-typed (`public.png` or `public.tiff`), it fires the callback.
-- **Focus check** uses `AXUIElementCopyAttributeValue` against `kAXFocusedUIElementAttribute` on the system-wide AX element. We accept `kAXTextFieldRole`, `kAXTextAreaRole`, `kAXComboBoxRole`, an `AXEditable` attribute set to true, or any element where `kAXValueAttribute` is settable.
-- **Terminal routing** matches `NSWorkspace.shared.frontmostApplication?.bundleIdentifier` against a small allowlist of terminal bundles. If matched, we send Ctrl+V instead of Cmd+V — terminals intercept Cmd+V to paste *text only* from the clipboard, but TUIs running inside them (like Claude Code) bind Ctrl+V to "read NSPasteboard directly and grab the image."
-- **`NSPanel`** with `.borderless`, `.nonactivatingPanel`, and `.floating` level renders the HUD without stealing focus.
-
-## Limitations
-
-- **One image at a time.** macOS clipboard is single-slot. Snappr replaces the clipboard contents on each capture.
-- **Terminal allowlist is hand-maintained.** If you use a terminal not on the list, paste won't reach the TUI inside. Add its bundle ID to the `Terminals.bundleIDs` set in `main.swift` and rebuild. Find it via `mdls -name kMDItemCFBundleIdentifier /Applications/YourTerminal.app`.
-- **Some Electron apps with custom inputs** may report a non-editable focused element. The screenshot stays on clipboard in that case; manual `Cmd+V` works.
-- **No video / multi-frame support.** A WIP branch explores extracting frames from a screen recording and pasting them as a sequence; not yet on `main`.
-
-## Roadmap
-
-- Configurable hotkey (currently hardcoded double-Ctrl)
-- Configurable disarm key (currently single Ctrl + Esc)
-- Per-app paste routing config
-- Video → frame sequence (1 fps, ≤15s cap)
-- Self-signed cert in build script
-- Login-item / launch-at-startup option
-
 ## License
 
-MIT. Use it however you like.
+MIT.
