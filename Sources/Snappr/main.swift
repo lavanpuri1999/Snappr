@@ -1,6 +1,7 @@
 import Cocoa
 import ApplicationServices
 import Carbon.HIToolbox
+import AVFoundation
 
 // MARK: - Entry point
 
@@ -42,6 +43,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func quit() { NSApp.terminate(nil) }
 }
 
+// MARK: - Recording folder (hardcoded to ~/Desktop for now)
+
+enum RecordingFolder {
+    static var url: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+    }
+}
+
 // MARK: - Permissions
 
 func ensureAccessibilityPermission() {
@@ -57,9 +66,14 @@ final class ArmController {
     private var lastCtrlTapAt: TimeInterval = 0
     private let doubleTapWindow: TimeInterval = 0.4
     private var pasteboardWatcher: PasteboardWatcher?
+    private var recordingWatcher: RecordingWatcher?
     private var hud: ArmedHUD?
     private var eventTap: CFMachPort?
     private weak var statusItem: NSStatusItem?
+    private var pastingSequence = false
+    private var pendingFrames: [CGImage] = []
+    private var disarming = false
+    private var screenshotTarget: NSRunningApplication?
 
     init(statusItem: NSStatusItem?) { self.statusItem = statusItem }
 
@@ -122,29 +136,154 @@ final class ArmController {
 
     private func arm() {
         armed = true
+        pendingFrames = []
+        screenshotTarget = NSWorkspace.shared.frontmostApplication
         statusItem?.button?.title = "● Snappr"
         hud = ArmedHUD()
         hud?.show()
         pasteboardWatcher = PasteboardWatcher { [weak self] in self?.handleNewImage() }
         pasteboardWatcher?.start()
+        recordingWatcher = RecordingWatcher(folder: RecordingFolder.url) { [weak self] url in
+            self?.handleNewVideo(url)
+        }
+        recordingWatcher?.start()
     }
 
     private func disarm() {
-        armed = false
-        statusItem?.button?.title = "○ Snappr"
+        if disarming { return }
+        disarming = true
+        // Stop watchers immediately so no new captures land mid-flush.
         pasteboardWatcher?.stop()
         pasteboardWatcher = nil
-        hud?.hide()
-        hud = nil
+        recordingWatcher?.stop()
+        recordingWatcher = nil
+
+        if !pendingFrames.isEmpty && shouldAutoPaste() {
+            let frames = pendingFrames
+            pendingFrames = []
+            hud?.flash("Pasting \(frames.count) frames…")
+            pasteFramesSequentially(frames) { [weak self] in
+                self?.finishDisarm()
+            }
+        } else {
+            if !pendingFrames.isEmpty {
+                hud?.flash("No editable focus · \(pendingFrames.count) frames discarded")
+            }
+            pendingFrames = []
+            finishDisarm()
+        }
+    }
+
+    private func finishDisarm() {
+        armed = false
+        disarming = false
+        screenshotTarget = nil
+        statusItem?.button?.title = "○ Snappr"
+        // Small delay so the user sees the final HUD message.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.hud?.hide()
+            self?.hud = nil
+        }
     }
 
     private func handleNewImage() {
-        if shouldAutoPaste() {
-            synthesizePaste()
-            hud?.flash("Pasted")
-        } else {
-            hud?.flash("On clipboard · ⌘V to paste")
+        if pastingSequence { return } // ignore self-induced clipboard changes
+        let originalFront = NSWorkspace.shared.frontmostApplication
+        focusScreenshotTarget { [weak self] in
+            guard let self else { return }
+            if shouldAutoPaste() {
+                synthesizePaste()
+                self.hud?.flash("Pasted")
+                // Wait for the paste keystroke to land (CGEvent posts are
+                // async). 80ms is conservative for HID delivery on Apple
+                // Silicon. Then return focus to where the user was.
+                if let originalFront,
+                   originalFront.bundleIdentifier != self.screenshotTarget?.bundleIdentifier {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                        originalFront.activate(options: [])
+                    }
+                }
+            } else {
+                self.hud?.flash("On clipboard · ⌘V to paste")
+            }
         }
+    }
+
+    private func focusScreenshotTarget(then: @escaping () -> Void) {
+        let front = NSWorkspace.shared.frontmostApplication
+        guard let target = screenshotTarget,
+              target.bundleIdentifier != front?.bundleIdentifier else {
+            then(); return
+        }
+        target.activate(options: [])
+        // Poll frontmost rather than guessing a fixed delay. Activation is
+        // usually <50ms on a warm app; cold apps may take longer. We add a
+        // small post-activation grace period so keyboard focus is settled
+        // before we synthesize the paste.
+        Self.waitUntilFrontmost(target, timeoutMs: 600) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.04, execute: then)
+        }
+    }
+
+    private static func waitUntilFrontmost(_ app: NSRunningApplication,
+                                           timeoutMs: Int,
+                                           then: @escaping () -> Void) {
+        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
+        func check() {
+            let front = NSWorkspace.shared.frontmostApplication
+            if front?.bundleIdentifier == app.bundleIdentifier {
+                then(); return
+            }
+            if Date() >= deadline {
+                // Give up gracefully — paste will still try, may land in the
+                // wrong place but better than hanging.
+                then(); return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.012) { check() }
+        }
+        check()
+    }
+
+    private func handleNewVideo(_ url: URL) {
+        hud?.flash("Processing video…")
+        Task { [weak self] in
+            guard let self else { return }
+            let frames = await extractFramesAt1FPS(from: url, maxFrames: 20)
+            await MainActor.run {
+                guard let frames, !frames.isEmpty else {
+                    self.hud?.flash("Video unreadable")
+                    return
+                }
+                guard self.armed else { return }
+                self.pendingFrames.append(contentsOf: frames)
+                self.hud?.flash("\(self.pendingFrames.count) frames ready · disarm to paste")
+            }
+        }
+    }
+
+    private func pasteFramesSequentially(_ frames: [CGImage], onDone: @escaping () -> Void) {
+        pastingSequence = true
+        var i = 0
+        func step() {
+            if i >= frames.count {
+                self.pastingSequence = false
+                self.hud?.flash("Pasted \(frames.count) frames")
+                onDone()
+                return
+            }
+            let cg = frames[i]
+            let nsImage = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            if let tiff = nsImage.tiffRepresentation {
+                pb.setData(tiff, forType: .tiff)
+            }
+            synthesizePaste()
+            self.hud?.flash("Frame \(i + 1)/\(frames.count)")
+            i += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { step() }
+        }
+        step()
     }
 }
 
@@ -169,6 +308,12 @@ final class PasteboardWatcher {
 
     func stop() { timer?.invalidate(); timer = nil }
 
+    // Call before writing to the clipboard ourselves so the next change isn't
+    // interpreted as a user screenshot.
+    func acknowledgeOwnWrite() {
+        lastChangeCount = NSPasteboard.general.changeCount + 1
+    }
+
     private func poll() {
         let pb = NSPasteboard.general
         guard pb.changeCount != lastChangeCount else { return }
@@ -178,6 +323,99 @@ final class PasteboardWatcher {
         if !types.isEmpty && !imageTypes.isDisjoint(with: Set(types)) {
             onImage()
         }
+    }
+}
+
+// MARK: - Recording watcher
+
+final class RecordingWatcher {
+    private let folder: URL
+    private let onVideo: (URL) -> Void
+    private var fd: Int32 = -1
+    private var source: DispatchSourceFileSystemObject?
+    private var seen: Set<String> = []
+
+    init(folder: URL, onVideo: @escaping (URL) -> Void) {
+        self.folder = folder
+        self.onVideo = onVideo
+    }
+
+    func start() {
+        seen = Set((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+        fd = open(folder.path, O_EVTONLY)
+        guard fd >= 0 else {
+            fputs("Snappr: cannot watch \(folder.path) (errno \(errno)). Video disabled.\n", stderr)
+            return
+        }
+        let src = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd, eventMask: .write, queue: .main)
+        src.setEventHandler { [weak self] in self?.scan() }
+        src.setCancelHandler { [weak self] in
+            guard let self else { return }
+            if self.fd >= 0 { close(self.fd); self.fd = -1 }
+        }
+        src.resume()
+        source = src
+    }
+
+    func stop() {
+        source?.cancel()
+        source = nil
+    }
+
+    private func scan() {
+        let now = Set((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+        let added = now.subtracting(seen)
+        seen = now
+        for name in added {
+            let lc = name.lowercased()
+            guard lc.hasSuffix(".mov") || lc.hasSuffix(".mp4") else { continue }
+            let url = folder.appendingPathComponent(name)
+            waitForStable(url: url, attempts: 0)
+        }
+    }
+
+    private func waitForStable(url: URL, attempts: Int) {
+        let s1 = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int) ?? 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            let s2 = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int) ?? 0
+            if s1 > 0 && s1 == s2 {
+                self.onVideo(url)
+            } else if attempts < 20 {
+                self.waitForStable(url: url, attempts: attempts + 1)
+            }
+        }
+    }
+}
+
+// MARK: - Frame extraction
+
+func extractFramesAt1FPS(from url: URL, maxFrames: Int) async -> [CGImage]? {
+    let asset = AVURLAsset(url: url)
+    do {
+        let duration = try await asset.load(.duration)
+        let secs = CMTimeGetSeconds(duration)
+        guard secs.isFinite, secs > 0 else { return nil }
+        let total = Int(secs.rounded())
+        let count = max(1, min(total, maxFrames))
+        let gen = AVAssetImageGenerator(asset: asset)
+        gen.appliesPreferredTrackTransform = true
+        gen.requestedTimeToleranceBefore = CMTime(seconds: 0.1, preferredTimescale: 600)
+        gen.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
+        var frames: [CGImage] = []
+        for i in 0..<count {
+            let t = CMTime(seconds: Double(i), preferredTimescale: 600)
+            do {
+                let (cg, _) = try await gen.image(at: t)
+                frames.append(cg)
+            } catch {
+                // skip bad frame
+            }
+        }
+        return frames
+    } catch {
+        return nil
     }
 }
 
