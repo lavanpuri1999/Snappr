@@ -6,6 +6,19 @@ Inspired by [Wispr Flow](https://wisprflow.ai)'s "tap-modifier-twice to arm" UX.
 
 No more saving screenshots to Desktop, dragging them into a chat box, then deleting them later.
 
+## Install
+
+You'll need macOS 13+ and Xcode (for the Swift toolchain).
+
+```bash
+git clone https://github.com/lavanpuri1999/Snappr.git
+cd Snappr
+./build-app.sh
+open Snappr.app
+```
+
+The build script compiles a release binary, wraps it in a `.app` bundle (so macOS Accessibility permission can attach to a stable bundle ID), ad-hoc signs it, and leaves `Snappr.app` in the project root.
+
 ## Usage
 
 Click into any text input, then **double-tap Ctrl** to arm. Press **Ctrl** (single tap) or **Esc** when done.
@@ -32,19 +45,6 @@ If you build with AI coding agents (Claude Code, Cursor, Copilot Chat, ChatGPT d
 - **Smart paste routing** — sends `Cmd+V` to native apps (Notes, Cursor, Slack), `Ctrl+V` to terminals (iTerm2, Terminal, Ghostty, kitty, Alacritty, WezTerm, Warp, Hyper) so TUIs like Claude Code can read the image off the clipboard.
 - **Focus check** — if you're not on an editable field when the screenshot lands, Snappr leaves it on the clipboard and shows a "⌘V to paste" hint instead of pasting into the wrong place.
 - **Status icon** — `○ Snappr` when idle, `● Snappr` when armed.
-
-## Install
-
-You'll need macOS 13+ and Xcode (for the Swift toolchain).
-
-```bash
-git clone https://github.com/lavanpuri1999/Snappr.git
-cd Snappr
-./build-app.sh
-open Snappr.app
-```
-
-The build script compiles a release binary, wraps it in a `.app` bundle (so macOS Accessibility permission can attach to a stable bundle ID), ad-hoc signs it, and leaves `Snappr.app` in the project root.
 
 ## First-run setup
 
