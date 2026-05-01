@@ -6,6 +6,21 @@ Inspired by [Wispr Flow](https://wisprflow.ai)'s "tap-modifier-twice to arm" UX.
 
 No more saving screenshots to Desktop, dragging them into a chat box, then deleting them later.
 
+## Usage
+
+Click into any text input, then **double-tap Ctrl** to arm. Press **Ctrl** (single tap) or **Esc** when done.
+
+### Screenshots
+
+1. Arm in the input you want screenshots to land in.
+2. Take a screenshot from anywhere — Snappr pastes it back into the armed input automatically.
+
+### Videos
+
+1. Arm anywhere.
+2. Record a screen video (saves to Desktop) — Snappr extracts the first 20 frames at 1 fps; HUD shows "N frames ready · disarm to paste".
+3. Click into the input you want the frames in, then disarm — frames flush in sequence.
+
 ## Why
 
 If you build with AI coding agents (Claude Code, Cursor, Copilot Chat, ChatGPT desktop), you paste screenshots constantly — bug repros, design references, error states. The default macOS flow is: `Cmd+Shift+4` → save to Desktop → drag into chat → manually delete the file later. Snappr collapses that to: arm, screenshot, done.
@@ -48,21 +63,6 @@ If you miss the prompt:
 You also want screenshots going to the clipboard. Either:
 - Hold **Ctrl** with your screenshot shortcut (`Ctrl+Cmd+Shift+4` for selection → clipboard), or
 - Set it as the default: `Cmd+Shift+5` → **Options** → **Save to: Clipboard**
-
-## Usage
-
-Click into any text input, then **double-tap Ctrl** to arm. Press **Ctrl** (single tap) or **Esc** when done.
-
-### Screenshots
-
-1. Arm in the input you want screenshots to land in.
-2. Take a screenshot from anywhere — Snappr pastes it back into the armed input automatically.
-
-### Videos
-
-1. Arm anywhere.
-2. Record a screen video (saves to Desktop) — Snappr extracts the first 20 frames at 1 fps; HUD shows "N frames ready · disarm to paste".
-3. Click into the input you want the frames in, then disarm — frames flush in sequence.
 
 ## License
 
