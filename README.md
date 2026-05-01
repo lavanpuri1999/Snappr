@@ -51,13 +51,18 @@ You also want screenshots going to the clipboard. Either:
 
 ## Usage
 
-1. Click into any text input (chat box, code editor, terminal, note, message).
-2. **Double-tap Ctrl** within ~0.4 seconds. The HUD appears: a pulsing red dot and "Listening · Esc to stop".
-3. Take a screenshot. The image is auto-pasted into your input.
-4. Take another. And another. Keep going.
-5. Press **Ctrl** (single tap) or **Esc** when done.
+Click into any text input, then **double-tap Ctrl** to arm. Press **Ctrl** (single tap) or **Esc** when done.
 
-If you click into a non-editable area between screenshots, Snappr will skip auto-pasting that one and flash "On clipboard · ⌘V to paste". The next screenshot, if your cursor is back in an input, will paste normally.
+### Screenshots
+
+1. Arm in the input you want screenshots to land in.
+2. Take a screenshot from anywhere — Snappr pastes it back into the armed input automatically.
+
+### Videos
+
+1. Arm anywhere.
+2. Record a screen video (saves to Desktop) — Snappr extracts the first 20 frames at 1 fps; HUD shows "N frames ready · disarm to paste".
+3. Click into the input you want the frames in, then disarm — frames flush in sequence.
 
 ## License
 
